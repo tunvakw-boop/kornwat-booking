@@ -145,6 +145,23 @@
   .pending-alert:hover { transform: translateY(-2px); box-shadow: 0 6px 16px rgba(243,156,18,.4); }
   .pending-alert .text { font-weight: 700; font-size: 15px; }
   .pending-alert .num { font-size: 24px; font-weight: 800; }
+
+  .modal-backdrop {
+    position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 200;
+    display: none; align-items: center; justify-content: center; padding: 20px;
+  }
+  .modal-backdrop.show { display: flex; }
+  .modal-box {
+    background: white; border-radius: 16px; padding: 22px 20px;
+    max-width: 540px; width: 100%; max-height: 90vh; overflow-y: auto;
+    box-shadow: 0 20px 60px rgba(0,0,0,.3);
+  }
+  .modal-box h3 { color: #2e7d5e; margin-bottom: 14px; font-size: 18px; }
+  .modal-info { background: #fff8e6; padding: 14px; border-radius: 10px;
+    margin-bottom: 16px; border-left: 4px solid #f39c12; }
+  .modal-info .name { font-weight: 700; color: #2c3e50; font-size: 16px; margin-bottom: 6px; }
+  .modal-info .meta { font-size: 13px; color: #555; margin: 3px 0; }
+  .modal-info .meta strong { color: #2c3e50; }
   .booking-meta { font-size: 13px; color: #7f8c8d; margin-top: 4px; }
   .booking-rooms { display: inline-flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
   .room-tag { background: #ecf8f3; color: #2e7d5e; padding: 2px 8px;
@@ -418,6 +435,22 @@
       <div class="stats-grid" id="statsGrid"></div>
       <h3 style="margin:20px 0 12px;color:#34495e;font-size:16px">อัตราการเข้าพักรายห้อง:</h3>
       <div id="roomOccupancy"></div>
+    </div>
+  </div>
+</div>
+
+<div id="quickAssignModal" class="modal-backdrop" onclick="if(event.target.id==='quickAssignModal') closeQuickAssign()">
+  <div class="modal-box">
+    <h3>⚡ จัดห้องด่วน</h3>
+    <div id="quickAssignInfo" class="modal-info"></div>
+    <div class="form-group">
+      <label>เลือกห้องพัก (กดเลือกหลายห้องได้)</label>
+      <div class="room-grid" id="quickAssignRooms"></div>
+    </div>
+    <div id="quickAssignAlert"></div>
+    <div class="form-actions" style="margin-top:14px">
+      <button class="btn btn-primary" id="quickAssignSaveBtn" onclick="quickAssignSave()" style="flex:1">💾 บันทึก + Confirm</button>
+      <button class="btn" onclick="closeQuickAssign()">ยกเลิก</button>
     </div>
   </div>
 </div>
@@ -784,6 +817,118 @@ function editBooking(id) {
   document.querySelector('.tab:nth-child(2)').click();
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
+// ===== Quick Assign Modal (mobile-friendly room assignment) =====
+let quickAssignBookingId = null;
+
+function openQuickAssign(bookingId) {
+  const b = bookings.find(x => x.id === bookingId);
+  if (!b) return;
+  quickAssignBookingId = bookingId;
+  const ci = parseDate(b.checkIn), co = parseDate(b.checkOut);
+  const dateStr = ci.getDate() + '/' + (ci.getMonth()+1) + '/' + (ci.getFullYear()+543) + ' → ' +
+                  co.getDate() + '/' + (co.getMonth()+1) + '/' + (co.getFullYear()+543);
+  const nights = nightsBetween(b.checkIn, b.checkOut);
+  const guestEmoji = b.type === 'group' ? '👥' : '👤';
+  const sourceTag = b.source === 'agoda' ? '<span class="source-badge agoda">📡 Agoda #' + (b.externalId || '') + '</span>' : '';
+  const adults = b.extraInfo && b.extraInfo.no_of_adults ? b.extraInfo.no_of_adults + ' ผู้ใหญ่' : '';
+  const noOfRooms = b.extraInfo && b.extraInfo.no_of_rooms ? b.extraInfo.no_of_rooms : 1;
+  const country = b.extraInfo && b.extraInfo.country ? '🌍 ' + b.extraInfo.country : '';
+
+  document.getElementById('quickAssignInfo').innerHTML =
+    '<div class="name">' + guestEmoji + ' ' + escapeHtml(b.name) + ' ' + sourceTag + '</div>' +
+    (b.roomType ? '<div class="meta">📋 <strong>' + escapeHtml(b.roomType) + '</strong></div>' : '') +
+    '<div class="meta">📅 ' + dateStr + ' · ' + nights + ' คืน</div>' +
+    (adults || noOfRooms > 1 ? '<div class="meta">' + (noOfRooms > 1 ? noOfRooms + ' ห้อง · ' : '') + adults + '</div>' : '') +
+    (country ? '<div class="meta">' + country + '</div>' : '') +
+    (b.notes ? '<div class="meta" style="margin-top:6px;font-style:italic">📝 ' + escapeHtml(b.notes) + '</div>' : '');
+
+  // Build room chips
+  const grid = document.getElementById('quickAssignRooms');
+  grid.innerHTML = '';
+  ROOMS.forEach(r => {
+    const chip = document.createElement('div');
+    chip.className = 'room-chip';
+    chip.textContent = r;
+    chip.dataset.room = r;
+    if (b.rooms.includes(r)) chip.classList.add('selected');
+    chip.onclick = () => {
+      chip.classList.toggle('selected');
+      checkQuickAssignConflicts();
+    };
+    grid.appendChild(chip);
+  });
+
+  document.getElementById('quickAssignAlert').innerHTML = '';
+  document.getElementById('quickAssignModal').classList.add('show');
+}
+
+function closeQuickAssign() {
+  document.getElementById('quickAssignModal').classList.remove('show');
+  quickAssignBookingId = null;
+}
+
+function checkQuickAssignConflicts() {
+  const b = bookings.find(x => x.id === quickAssignBookingId);
+  if (!b) return;
+  const rooms = Array.from(document.querySelectorAll('#quickAssignRooms .room-chip.selected'))
+    .map(c => parseInt(c.dataset.room));
+  if (rooms.length === 0) {
+    document.getElementById('quickAssignAlert').innerHTML = '';
+    return;
+  }
+  const dates = dateRange(b.checkIn, b.checkOut);
+  const conflicts = [];
+  rooms.forEach(r => {
+    dates.forEach(d => {
+      bookings.forEach(other => {
+        if (other.id === b.id || other.status === 'cancelled') return;
+        if (other.rooms.includes(r) && dateRange(other.checkIn, other.checkOut).includes(d)) {
+          conflicts.push('ห้อง ' + r + ' วันที่ ' + parseDate(d).getDate() + ' ชน "' + other.name + '"');
+        }
+      });
+    });
+  });
+  const alertDiv = document.getElementById('quickAssignAlert');
+  if (conflicts.length > 0) {
+    const u = [...new Set(conflicts)];
+    alertDiv.innerHTML = '<div class="alert alert-warn">⚠️ ' + u.slice(0,3).join(' / ') + (u.length>3 ? ' +' + (u.length-3) : '') + '</div>';
+  } else {
+    alertDiv.innerHTML = '';
+  }
+}
+
+async function quickAssignSave() {
+  const rooms = Array.from(document.querySelectorAll('#quickAssignRooms .room-chip.selected'))
+    .map(c => parseInt(c.dataset.room))
+    .sort((a, b) => a - b);
+  if (rooms.length === 0) return showToast('กรุณาเลือกห้องอย่างน้อย 1 ห้อง', 'error');
+
+  const btn = document.getElementById('quickAssignSaveBtn');
+  btn.disabled = true;
+  btn.textContent = '⏳ กำลังบันทึก...';
+  setSyncStatus('syncing', 'กำลังจัดห้อง...');
+  try {
+    const { error } = await sb.from('room_schedule').update({
+      rooms: rooms,
+      status: 'confirmed'
+    }).eq('id', quickAssignBookingId);
+    if (error) throw error;
+    showToast('จัดห้องเรียบร้อย ✓ Confirmed', 'success');
+    closeQuickAssign();
+    await loadBookings();
+    renderCalendar();
+    renderBookingList();
+    setSyncStatus('online', 'เชื่อมต่อแล้ว');
+  } catch (e) {
+    console.error(e);
+    showToast('บันทึกไม่สำเร็จ: ' + e.message, 'error');
+    setSyncStatus('offline', 'ผิดพลาด');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '💾 บันทึก + Confirm';
+  }
+}
+
 async function deleteBooking(id) {
   const b = bookings.find(x => x.id === id);
   if (!b) return;
@@ -874,9 +1019,10 @@ function renderBookingList() {
     const roomsHtml = sortedRooms.length > 0
       ? sortedRooms.map(r => '<span class="room-tag">ห้อง ' + r + '</span>').join('')
       : '<span class="room-tag" style="background:#f9e79f;color:#7d6608">⚠️ ยังไม่จัดห้อง</span>';
-    const roomTypeStr = b.roomType ? '<div style="font-size:12px;color:#7f8c8d;margin-top:2px">📋 ' + escapeHtml(b.roomType) + '</div>' : '';
+    const guestCount = (b.extraInfo && b.extraInfo.no_of_adults) ? b.extraInfo.no_of_adults + ' ผู้ใหญ่' : '';
+    const roomTypeStr = b.roomType ? '<div style="font-size:12px;color:#34495e;margin-top:4px;font-weight:600">📋 ' + escapeHtml(b.roomType) + (guestCount ? ' · ' + guestCount : '') + '</div>' : (guestCount ? '<div style="font-size:12px;color:#7f8c8d;margin-top:2px">' + guestCount + '</div>' : '');
     const actionBtn = b.status === 'pending'
-      ? '<button class="btn btn-sm btn-primary" onclick="editBooking(\'' + b.id + '\')">⚡ จัดห้องด่วน</button>'
+      ? '<button class="btn btn-sm btn-primary" onclick="openQuickAssign(\'' + b.id + '\')">⚡ จัดห้องด่วน</button>'
       : '<button class="btn btn-sm" onclick="editBooking(\'' + b.id + '\')">✏️ แก้ไข</button>';
     return '<div class="booking-item ' + itemClass + ' ' + (b.type === 'group' ? 'group' : '') + '">' +
       '<div class="booking-info">' +
