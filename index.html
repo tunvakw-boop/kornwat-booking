@@ -1211,10 +1211,12 @@ function generateLineMessage() {
     allDates.push(fmtDateISO(d));
   }
 
-  // Map dates to bookings
+  // Map dates to bookings — skip cancelled + pending (no rooms) bookings
   const dayMap = {};
   allDates.forEach(d => dayMap[d] = []);
   bookings.forEach(b => {
+    if (b.status === 'cancelled') return; // ข้าม booking ที่ยกเลิก
+    if (!b.rooms || b.rooms.length === 0) return; // ข้าม pending ที่ยังไม่จัดห้อง
     const all = dateRange(b.checkIn, b.checkOut);
     all.forEach((d, idx) => {
       if (dayMap[d] !== undefined) dayMap[d].push({ booking: b, nightNum: idx+1, totalNights: all.length });
