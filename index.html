@@ -354,10 +354,23 @@
   <div id="tab-list" class="tab-panel hidden">
     <div class="panel">
       <h2>📋 รายการจองทั้งหมด</h2>
+      <div class="quick-range-buttons">
+        <span style="font-size:13px;color:#7f8c8d;font-weight:600;align-self:center;margin-right:4px">ช่วงเวลาด่วน:</span>
+        <button onclick="setListQuickRange('today')">วันนี้</button>
+        <button onclick="setListQuickRange('thisWeek')">สัปดาห์นี้</button>
+        <button onclick="setListQuickRange('thisMonth')">เดือนนี้</button>
+        <button onclick="setListQuickRange('nextMonth')">เดือนหน้า</button>
+        <button onclick="setListQuickRange('next7days')">7 วันข้างหน้า</button>
+        <button onclick="setListQuickRange('all')">ทั้งหมด</button>
+      </div>
       <div class="form-grid">
         <div class="form-group">
-          <label>กรองตามเดือน</label>
-          <input type="month" id="filterMonth">
+          <label>วันที่เริ่มต้น</label>
+          <input type="date" id="filterStartDate">
+        </div>
+        <div class="form-group">
+          <label>วันที่สิ้นสุด</label>
+          <input type="date" id="filterEndDate">
         </div>
         <div class="form-group">
           <label>ค้นหาชื่อ</label>
@@ -406,7 +419,7 @@
       <div class="form-group">
         <div class="checkbox-row">
           <input type="checkbox" id="includeEmojis" checked>
-          <label for="includeEmojis">ใส่ emoji 📌 🛏️ ในข้อความ</label>
+          <label for="includeEmojis">ใส่ emoji 📌 🛋️ ในข้อความ</label>
         </div>
         <div class="checkbox-row">
           <input type="checkbox" id="includeNightCount" checked>
@@ -691,7 +704,7 @@ function showDayDetails(dateStr) {
       const nightNum = dateRange(b.checkIn, b.checkOut).indexOf(dateStr) + 1;
       const total = nightsBetween(b.checkIn, b.checkOut);
       const sortedRooms = [...b.rooms].sort((x,y) => x - y);
-      msg += '🛏️ ห้อง ' + sortedRooms.join(',') + ' - ' + b.name + ' (คืนที่ ' + nightNum + '/' + total + ')\n';
+      msg += '🛋️ ห้อง ' + sortedRooms.join(',') + ' - ' + b.name + ' (คืนที่ ' + nightNum + '/' + total + ')\n';
     });
   }
   alert(msg);
@@ -965,14 +978,21 @@ function detectAllConflicts() {
   return conflictIds;
 }
 function renderBookingList() {
-  const monthFilter = document.getElementById('filterMonth').value;
+  const startDateFilter = document.getElementById('filterStartDate').value;
+  const endDateFilter = document.getElementById('filterEndDate').value;
   const nameFilter = document.getElementById('filterName').value.toLowerCase();
   const showCancelled = document.getElementById('showCancelled').checked;
   const list = document.getElementById('bookingList');
 
   let filtered = [...bookings];
   if (!showCancelled) filtered = filtered.filter(b => b.status !== 'cancelled');
-  if (monthFilter) filtered = filtered.filter(b => dateRange(b.checkIn, b.checkOut).some(d => d.startsWith(monthFilter)));
+  if (startDateFilter && endDateFilter) {
+    const startSet = new Set();
+    for (let d = parseDate(startDateFilter); d <= parseDate(endDateFilter); d.setDate(d.getDate() + 1)) {
+      startSet.add(fmtDateISO(d));
+    }
+    filtered = filtered.filter(b => dateRange(b.checkIn, b.checkOut).some(d => startSet.has(d)));
+  }
   if (nameFilter) filtered = filtered.filter(b => b.name.toLowerCase().includes(nameFilter));
 
   if (filtered.length === 0) {
@@ -1043,13 +1063,13 @@ function renderBookingList() {
     html += '<div class="list-section-title" style="color:#d35400">⚡ รอจัดห้อง — Agoda (' + pending.length + ')</div>';
     html += pending.map(b => renderItem(b, 'upcoming')).join('');
   }
-  if (groups.upcoming.length > 0) {
-    html += '<div class="list-section-title">🔵 กำลังจะมา (' + groups.upcoming.length + ')</div>';
-    html += groups.upcoming.map(b => renderItem(b, 'upcoming')).join('');
-  }
   if (groups.active.length > 0) {
     html += '<div class="list-section-title">🟢 พักอยู่ตอนนี้ (' + groups.active.length + ')</div>';
     html += groups.active.map(b => renderItem(b, 'active')).join('');
+  }
+  if (groups.upcoming.length > 0) {
+    html += '<div class="list-section-title">🔵 กำลังจะมา (' + groups.upcoming.length + ')</div>';
+    html += groups.upcoming.map(b => renderItem(b, 'upcoming')).join('');
   }
   if (groups.past.length > 0) {
     html += '<div class="list-section-title">⚪ เช็คเอาท์แล้ว (' + groups.past.length + ')</div>';
@@ -1082,8 +1102,44 @@ function goToPending() {
   setTimeout(() => window.scrollTo({ top: document.querySelector('.list-section-title').offsetTop - 100, behavior: 'smooth' }), 100);
 }
 function clearFilters() {
-  document.getElementById('filterMonth').value = '';
+  document.getElementById('filterStartDate').value = '';
+  document.getElementById('filterEndDate').value = '';
   document.getElementById('filterName').value = '';
+  renderBookingList();
+}
+
+// Quick range buttons for booking list filter
+function setListQuickRange(type) {
+  const today = new Date();
+  let start, end;
+  if (type === 'all') {
+    document.getElementById('filterStartDate').value = '';
+    document.getElementById('filterEndDate').value = '';
+    renderBookingList();
+    return;
+  }
+  if (type === 'today') {
+    start = new Date(today);
+    end = new Date(today);
+  } else if (type === 'thisWeek') {
+    const dow = today.getDay();
+    start = new Date(today);
+    start.setDate(today.getDate() - dow);
+    end = new Date(start);
+    end.setDate(start.getDate() + 6);
+  } else if (type === 'thisMonth') {
+    start = new Date(today.getFullYear(), today.getMonth(), 1);
+    end = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+  } else if (type === 'nextMonth') {
+    start = new Date(today.getFullYear(), today.getMonth() + 1, 1);
+    end = new Date(today.getFullYear(), today.getMonth() + 2, 0);
+  } else if (type === 'next7days') {
+    start = new Date(today);
+    end = new Date(today);
+    end.setDate(today.getDate() + 6);
+  }
+  document.getElementById('filterStartDate').value = fmtDateISO(start);
+  document.getElementById('filterEndDate').value = fmtDateISO(end);
   renderBookingList();
 }
 
@@ -1166,7 +1222,7 @@ function generateLineMessage() {
   });
 
   const pin = useEmoji ? '📌 ' : '';
-  const bed = useEmoji ? '🛏️ ' : '- ';
+  const bed = useEmoji ? '🛋️ ' : '- ';
   let msg = header + '\n';
   let hasAny = false;
   allDates.forEach(dateStr => {
@@ -1337,8 +1393,11 @@ async function init() {
   ['checkIn','checkOut'].forEach(id => {
     document.getElementById(id).addEventListener('change', checkConflictsLive);
   });
-  document.getElementById('filterMonth').addEventListener('change', renderBookingList);
+  document.getElementById('filterStartDate').addEventListener('change', renderBookingList);
+  document.getElementById('filterEndDate').addEventListener('change', renderBookingList);
   document.getElementById('filterName').addEventListener('input', renderBookingList);
+  // Default booking list filter to current month
+  setListQuickRange('thisMonth');
   subscribeRealtime();
   window.addEventListener('online', () => { setSyncStatus('online', 'เชื่อมต่อแล้ว'); reloadData(); });
   window.addEventListener('offline', () => setSyncStatus('offline', 'ออฟไลน์'));
